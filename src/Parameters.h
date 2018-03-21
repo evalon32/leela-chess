@@ -43,6 +43,7 @@ extern std::string cfg_weightsfile;
 extern std::string cfg_supervise;
 extern FILE* cfg_logfile_handle;
 extern bool cfg_quiet;
+extern std::string cfg_start_fen;
 
 class Parameters {
 public:

@@ -26,6 +26,7 @@
 
 #include "Movegen.h"
 #include "pgn.h"
+#include "Parameters.h"
 #include "Position.h"
 #include "Training.h"
 #include "UCI.h"
@@ -179,12 +180,15 @@ int play_one_game(BoardHistory& bh) {
 
 int play_one_game() {
   BoardHistory bh;
-  bh.set(Position::StartFEN);
+  bh.set(cfg_start_fen.empty() ? Position::StartFEN : cfg_start_fen);
 
   Training::clear_training();
   int game_score = play_one_game(bh);
 
-  printf("PGN\n%s\nEND\n", bh.pgn().c_str());
+  printf("PGN\n");
+  if (!cfg_start_fen.empty())
+    printf("[FEN \"%s\"]\n", cfg_start_fen.c_str());
+  printf("%s\nEND\n", bh.pgn().c_str());
   printf("Score: %d\n", game_score);
 
   return game_score;
@@ -211,6 +215,8 @@ void generate_training_games(istringstream& is) {
 }
 
 void bench() {
+  BoardHistory bh;
+  if (cfg_start_fen.empty()) {
   std::string raw = R"EOM([Event "?"]
 [Site "?"]
 [Date "2018.01.14"]
@@ -231,6 +237,8 @@ Bg3 15. f4 d6 16. cxd6+ Ke8 17. Kg1 Bd7 18. a4 Rd8 {0.50s} 19. a5 Ra8 {0.54s}
 
 )EOM";
 
+  if (!cfg_start_fen.empty())
+    raw = "[FEN \"" + cfg_start_fen + "\"]\n";
   std::istringstream ss(raw);
   PGNParser parser(ss);
   auto game = parser.parse();
@@ -246,7 +254,11 @@ Bg3 15. f4 d6 16. cxd6+ Ke8 17. Kg1 Bd7 18. a4 Rd8 {0.50s} 19. a5 Ra8 {0.54s}
   fclose(f);
   */
 
-  auto search = std::make_unique<UCTSearch>(std::move(game->bh));
+  bh = std::move(game->bh);
+  } else {
+    bh.set(cfg_start_fen);
+  }
+  auto search = std::make_unique<UCTSearch>(std::move(bh));
   search->set_quiet(false);
   search->think();
 }

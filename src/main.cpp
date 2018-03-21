@@ -86,6 +86,7 @@ static std::string parse_commandline(int argc, char *argv[]) {
         ("puct", po::value<float>())
         ("softmax_temp", po::value<float>())
 #endif
+        ("start_fen", po::value<std::string>())
         ;
     // These won't be shown, we use them to catch incorrect usage of the
     // command line.
@@ -224,6 +225,10 @@ static std::string parse_commandline(int argc, char *argv[]) {
         cfg_tune_only = true;
     }
 #endif
+
+    if (vm.count("start_fen")) {
+      cfg_start_fen = vm["start_fen"].as<std::string>();
+    }
 
     std::string start = "";
     if (vm.count("start")) {

@@ -61,6 +61,7 @@ std::string cfg_logfile;
 std::string cfg_supervise;
 FILE* cfg_logfile_handle;
 bool cfg_quiet;
+std::string cfg_start_fen;
 
 void Parameters::setup_default_parameters() {
     cfg_allow_pondering = true;

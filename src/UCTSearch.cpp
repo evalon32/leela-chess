@@ -239,6 +239,8 @@ Move UCTSearch::think() {
     // create a sorted list of legal moves (make sure we play something legal and decent even in time trouble)
     float root_eval;
     m_root.create_children(m_nodes, bh_, root_eval);
+    // printf("info depth 0 nodes 0 nps 0 score cp 0 winrate %.2f%\n",
+    //	   root_eval * 100);
     if (cfg_noise) {
         m_root.dirichlet_noise(0.25f, 0.3f);
     }
@@ -252,7 +254,11 @@ Move UCTSearch::think() {
 
     bool keeprunning = true;
     int last_update = 0;
+    // bool midway_dump = false;
     do {
+      //if (!midway_dump && m_playouts >= 800) {
+      //  midway_dump = true; dump_analysis(0, true);
+      //}
         auto currstate = bh_.shallow_clone();
         auto result = play_simulation(currstate, &m_root);
         if (result.valid()) {
