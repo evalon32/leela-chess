@@ -17,6 +17,9 @@ sudo apt-get install -y nginx
 sudo systemctl status nginx
 
 cp nginx/default /etc/nginx/sites-available/default
+
+# Create cache directory
+mkdir -p /home/web/nginx/cache/
 ```
 
 Installing postgres:
@@ -78,6 +81,11 @@ Connecting through psql:
 sudo -u postgres psql -d gorm
 ```
 
+Restarting nginx:
+```
+sudo service nginx restart
+```
+
 ### Setting up backup
 
 ```
@@ -98,3 +106,5 @@ $ dropdb -U gorm gorm
 $ createdb -U gorm gorm
 $ gunzip -c backup.gz | psql gorm
 ```
+
+Note that on my mac, all the postgres utilities are at `/Library/PostgreSQL/10/bin/`.
