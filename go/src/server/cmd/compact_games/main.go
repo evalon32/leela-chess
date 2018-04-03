@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"server/db"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -110,12 +112,46 @@ func tarGames(games []db.TrainingGame) string {
 	return outputPath
 }
 
-func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+func deleteCompactedGames() {
+	dir := "../../games/run1/"
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	db.Init(true)
-	defer db.Close()
+	ids := []int{}
+	for _, file := range files {
+		id, err := strconv.Atoi(strings.Split(file.Name(), ".")[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
 
+	// Leave this many games on the server
+	leaveGames := 500000
+	log.Printf("Deleting from %d\n", ids[0])
+	for _, id := range ids {
+		if id + leaveGames >= ids[len(ids)-1] {
+			log.Printf("Deleted to %d\n", id)
+			break
+		}
+	}
+	log.Printf("Latest id %d\n", ids[len(ids)-1])
+
+	for _, id := range ids {
+		if id + leaveGames >= ids[len(ids)-1] {
+			break
+		}
+		err := os.Remove(dir + "training." + strconv.Itoa(id) + ".gz")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func compactGames() bool {
 	// Query for all the active games we haven't yet compacted.
 	games := []db.TrainingGame{}
 	numGames := 10000
@@ -124,7 +160,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if len(games) != numGames {
-		log.Fatal("Not enough games")
+		return false
 	}
 
 	outputPath := tarGames(games)
@@ -145,4 +181,17 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	return true
+}
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	db.Init(true)
+	defer db.Close()
+
+	for compactGames() {
+	}
+
+	deleteCompactedGames()
 }

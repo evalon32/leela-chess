@@ -20,12 +20,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func checkUser(c *gin.Context) (*db.User, error) {
+func checkUser(c *gin.Context) (*db.User, uint64, error) {
 	if len(c.PostForm("user")) == 0 {
-		return nil, errors.New("No user supplied")
+		return nil, 0, errors.New("No user supplied")
 	}
 	if len(c.PostForm("user")) > 32 {
-		return nil, errors.New("Username too long")
+		return nil, 0, errors.New("Username too long")
 	}
 
 	user := &db.User{
@@ -33,19 +33,33 @@ func checkUser(c *gin.Context) (*db.User, error) {
 	}
 	err := db.GetDB().Where(db.User{Username: c.PostForm("user")}).FirstOrCreate(&user).Error
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Ensure passwords match
 	if user.Password != c.PostForm("password") {
-		return nil, errors.New("Incorrect password")
+		return nil, 0, errors.New("Incorrect password")
 	}
 
-	return user, nil
+	version, err := strconv.ParseUint(c.PostForm("version"), 10, 64)
+	if err != nil {
+		return nil, 0, errors.New("Invalid version")
+	}
+	if version < 4 {
+		log.Println("Rejecting old game from %s, version %d", user.Username, version)
+		return nil, 0, errors.New("\n\n\n\n\nYou must upgrade to a newer version!!\n\n\n\n\n")
+	}
+
+	return user, version, nil
 }
 
 func nextGame(c *gin.Context) {
-	user, err := checkUser(c)
+	user, _, err := checkUser(c)
+	if err != nil {
+		log.Println(err)
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
 
 	training_run := db.TrainingRun{
 		Active: true,
@@ -235,22 +249,10 @@ func uploadNetwork(c *gin.Context) {
 }
 
 func uploadGame(c *gin.Context) {
-	user, err := checkUser(c)
+	user, version, err := checkUser(c)
 	if err != nil {
 		log.Println(err)
 		c.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	version, err := strconv.ParseUint(c.PostForm("version"), 10, 64)
-	if err != nil {
-		log.Println(err.Error())
-		c.String(http.StatusBadRequest, "Invalid version")
-		return
-	}
-	if version < 3 {
-		log.Println("Rejecting old game from %s, version %d", user.Username, version)
-		c.String(http.StatusBadRequest, "\n\n\n\n\nYou must upgrade to a newer version!!\n\n\n\n\n")
 		return
 	}
 
@@ -370,7 +372,7 @@ func checkMatchFinished(match_id uint) error {
 		}
 		// Update to our new best network
 		// TODO(SPRT)
-		passed := match.Wins > match.Losses
+		passed := calcElo(match.Wins, match.Losses, match.Draws) > -50.0
 		err = db.GetDB().Model(&match).Update("passed", passed).Error
 		if err != nil {
 			return err
@@ -387,7 +389,7 @@ func checkMatchFinished(match_id uint) error {
 }
 
 func matchResult(c *gin.Context) {
-	user, err := checkUser(c)
+	user, version, err := checkUser(c)
 	if err != nil {
 		log.Println(err)
 		c.String(http.StatusBadRequest, err.Error())
@@ -423,9 +425,10 @@ func matchResult(c *gin.Context) {
 	}
 
 	err = db.GetDB().Model(&match_game).Updates(db.MatchGame{
-		Result: int(result),
-		Done:   true,
-		Pgn:    c.PostForm("pgn"),
+		Version: uint(version),
+		Result:  int(result),
+		Done:    true,
+		Pgn:     c.PostForm("pgn"),
 	}).Error
 	if err != nil {
 		log.Println(err)
@@ -460,17 +463,12 @@ func matchResult(c *gin.Context) {
 }
 
 func getActiveUsers() (gin.H, error) {
-	rows, err := db.GetDB().Raw(`SELECT username, training_games.version, training_games.created_at, c.count FROM users
-LEFT JOIN training_games
+	rows, err := db.GetDB().Raw(`SELECT user_id, username, MAX(version), MAX(training_games.created_at), count(*) FROM training_games
+LEFT JOIN users
 ON users.id = training_games.user_id
-  AND training_games.id = (SELECT MAX(training_games.id) FROM training_games WHERE training_games.user_id = users.id)
-LEFT JOIN (SELECT user_id, count(*)
-FROM training_games
-WHERE created_at >= now() - INTERVAL '1 day'
-GROUP BY user_id) as c
-ON c.user_id = training_games.user_id
-WHERE c.count > 0
-ORDER BY c.count DESC`).Rows()
+WHERE training_games.created_at >= now() - INTERVAL '1 day'
+GROUP BY user_id, username
+ORDER BY count DESC`).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -480,11 +478,12 @@ ORDER BY c.count DESC`).Rows()
 	games_played := 0
 	users_json := []gin.H{}
 	for rows.Next() {
+		var user_id uint
 		var username string
 		var version int
 		var created_at time.Time
 		var count uint64
-		rows.Scan(&username, &version, &created_at, &count)
+		rows.Scan(&user_id, &username, &version, &created_at, &count)
 
 		active_users += 1
 		games_played += int(count)
@@ -866,6 +865,35 @@ func viewMatch(c *gin.Context) {
 	})
 }
 
+func viewTrainingData(c *gin.Context) {
+	rows, err := db.GetDB().Raw(`SELECT MAX(id) FROM training_games WHERE compacted = true`).Rows()
+	if err != nil {
+		log.Println(err)
+		c.String(500, "Internal error")
+		return
+	}
+	defer rows.Close()
+
+	var id uint
+	for rows.Next() {
+		rows.Scan(&id)
+		break
+	}
+
+	files := []gin.H{}
+	game_id := uint(30000)
+	for game_id < id {
+		files = append([]gin.H{
+			gin.H{"url": fmt.Sprintf("https://s3.amazonaws.com/lczero/training/games%d.tar.gz", game_id)},
+		}, files...)
+		game_id += 10000
+	}
+
+	c.HTML(http.StatusOK, "training_data", gin.H{
+		"files": files,
+	})
+}
+
 func createTemplates() multitemplate.Render {
 	r := multitemplate.New()
 	r.AddFromFiles("index", "templates/base.tmpl", "templates/index.tmpl")
@@ -876,6 +904,7 @@ func createTemplates() multitemplate.Render {
 	r.AddFromFiles("stats", "templates/base.tmpl", "templates/stats.tmpl")
 	r.AddFromFiles("match", "templates/base.tmpl", "templates/match.tmpl")
 	r.AddFromFiles("matches", "templates/base.tmpl", "templates/matches.tmpl")
+	r.AddFromFiles("training_data", "templates/base.tmpl", "templates/training_data.tmpl")
 	return r
 }
 
@@ -897,6 +926,7 @@ func setupRouter() *gin.Engine {
 	router.GET("/match/:id", viewMatch)
 	router.GET("/matches", viewMatches)
 	router.GET("/match_game/:id", viewMatchGame)
+	router.GET("/training_data", viewTrainingData)
 	router.POST("/next_game", nextGame)
 	router.POST("/upload_game", uploadGame)
 	router.POST("/upload_network", uploadNetwork)
